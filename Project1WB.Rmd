@@ -1,0 +1,640 @@
+---
+title: "Project1 Bit by Bit 2.7"
+Author: "Samuel Kang"
+date: "02.15.19"
+output: html_notebook
+---
+
+#A, B, and C
+a) Get the raw data from the Google Books NGram Viewer website
+(http://storage.googleapis.com/books/ngrams/books/datasetsv2.html). In
+particular, you should use version 2 of the English language corpus, which
+was released on July 1, 2012. Uncompressed, this file is 1.4 GB.
+b) Recreate the main part of figure 3a of Michel et al. (2011). To recreate
+this figure, you will need two files: the one you downloaded in part (a)
+and the “total counts” file, which you can use to convert the raw counts
+into proportions. Note that the total counts file has a structure that may
+make it a bit hard to read in. Does version 2 of the NGram data produce
+similar results to those presented in Michel et al. (2011), which are based
+on version 1 data?
+c) Now check your graph against the graph created by the NGram Viewer
+(https://books.google.com/ngrams).
+
+
+Load the 1gram file
+```{r}
+install.packages("tidyverse")
+library(tidyverse)
+setwd("~/Desktop/Project 1")
+getwd()
+ngramoriginal = read.table("1gram.txt")
+ngram = ngramoriginal
+```
+
+
+Filter by the three years I want: 1883, 1910, and 1950
+```{r}
+ngram = ngram %>% rename(
+  word = V1,
+  year = V2,
+  match_count = V3,
+  volume_count = V4
+  )
+ngram1 = filter(ngram, word == "1883" | word == "1910" | word == "1950")
+ngram1
+```
+
+
+
+Load the total count file
+```{r}
+totalcount = read.table("totalcount.txt", sep = "\t", colClasses = "character")
+totalcount
+```
+
+
+The current format of this is (year, match_count, page_count, volume_count). I have to make them into 4 columns. Use the separate function
+```{r}
+totalcount = separate_rows(totalcount, V1:V425, convert = TRUE)
+rownames(totalcount)[1] = "year"
+rownames(totalcount)[2] = "match_count"
+rownames(totalcount)[3] = "page_count"
+rownames(totalcount)[4] = "volume_count"
+finaltotalcount = as.data.frame(t(totalcount))
+finaltotalcount
+```
+
+
+Take the match_count of ngram1 and divide it by the match_count of finaltotalcount to find the proportion of the ngram compared to total words used for that year. 
+```{r}
+figurea1 = select(ngram1,
+                 word,
+                 year,
+                 match_count)
+figurea2 = select(finaltotalcount,
+                  year,
+                  match_count)
+
+figurea3 = left_join(figurea1, figurea2, by = "year") %>%
+  mutate(frequency = match_count.x / match_count.y)
+figurea3
+```
+
+
+
+Make the vizualization 
+```{r}
+ggplot(figurea3, aes(x = year, y = frequency, colour = word)) +
+  geom_freqpoly(binwidth = 500, stat = "identity")
+```
+
+
+#D
+d) Recreate figure 3a (main figure), but change the y-axis to be the raw
+mention count (not the rate of mentions).
+
+
+Raw count vizualization 
+```{r}
+ggplot(figurea3, aes(x = year, y = match_count.x , colour = word)) +
+  geom_freqpoly(binwidth = 500, stat = "identity")
+```
+
+
+#E
+e) Does the difference between (b) and (d) lead you to reevaluate any of the
+results of Michel et al. (2011).Why or why not?
+
+  The way Michel used frequency to determine word use decay makes sense as overtime more words will be added to the corpus and the amount of word mentions over time could increase due to possible reasons as more people, more authors, better document collection, and more outlets to use such as social media. If Michel and other were to rely on the raw mention count overtime, he may of thought word use increases over time, but that is not the case. 
+  
+
+#F
+f) Now, using the proportion of mentions, replicate the inset of figure 3a.
+That is, for each year between 1875 and 1975, calculate the half-life of
+that year. The half-life is defined to be the number of years that pass
+before the proportion of mentions reaches half its peak value. Note that
+Michel et al. (2011) do something more complicated to estimate the halflife—
+see section III.6 of their Supporting Online Information—but they
+claim that both approaches produce similar results. Does version 2 of the
+NGram data produce similar results to those presented in Michel et al.
+(2011), which are based on version 1 data? (Hint: Don’t be surprised if it
+doesn’t.)
+
+
+Half-life calculation
+
+```{r}
+ngram$word = as.integer(ngram$word)
+hlNgram = filter(ngram, word >= 1875)
+hlNgramf = filter(hlNgram, word <= 1975)
+
+originalhl = left_join(hlNgramf, figurea2, by = "year") %>%
+  mutate(frequency = match_count.x / match_count.y) %>%
+  select(word, year, frequency) %>%
+  mutate(yearG = year > word) %>%
+  filter(yearG == TRUE)
+hl = originalhl
+```
+
+
+After find the max frequency for each year and then filter frequency by 1/2 the max. Afterwards subtract the 1/2 frequency by the max.
+```{r}
+hlM = originalhl %>% group_by(word) %>% summarise(frequency = max(frequency))
+hlY = originalhl %>% group_by(year) 
+hlT = left_join(hlM, hlY, by = "frequency", suffix = c(".x", ".y"))
+hlT = select(hlT, word.x, year, frequency)
+hlT = hlT %>% group_by(word.x) %>% filter (! duplicated(word.x)) %>%
+  rename(word = word.x)
+hlT2 = hlT %>% select(frequency) %>%
+  left_join(hl, hlT, by = "word") %>%
+  filter(frequency.x > (frequency.y / 2)) %>%
+  select(word, frequency.x, year)
+
+
+hlF = left_join(hlT, hlT2, by = "word") %>%
+  filter(year.y > year.x) %>%
+  group_by(word) %>% summarise(year.y = min(year.y))
+hlT = hlT %>% select(word, year)
+hlF = left_join(hlF, hlT, by = "word") 
+hlF = mutate(hlF, half_life = (year.y - year))
+hlF = hlF %>% rename(ngram_year = word)
+hlF = hlF %>% select(ngram_year, half_life)
+hlF
+```
+
+Make the half-life vizualization. 
+```{r}
+englishhl = ggplot(hlF, aes(x = ngram_year, y = half_life)) +
+  geom_point(alpha = 8/10) +
+  geom_smooth() +
+  ggtitle("English")
+englishhl
+```
+Does version 2 of the
+NGram data produce similar results to those presented in Michel et al.
+(2011), which are based on version 1 data? (Hint: Don’t be surprised if it
+doesn’t.)
+  It does not as in Michel et al. their half life values for early years of the range 1875-1975 start off extremely high at 30 and then curve down later in the year range to an average of 15 years for half-life. 
+
+#G
+g) Were there any years that were outliers, such as years that were forgotten
+particularly quickly or particularly slowly? Briefly speculate about possible
+reasons for that pattern and explain how you identified the outliers.
+  Any years with a half-life > 10 would be an outlier and I determined that by using geom_smooth which applies a conditional mean line onto the ggplot. The most likely explanation for these outliers is historical events that happened such as wars or tragedies. For the year 1912 it had a half-life of 26, looking at the events of that year, there was the tragic event of the Titanic sinking. However what is strange is if my guess were to be true, that would mean the year 1914 which is the start of WW1, would have a high half-life. Looking at it, it does not and looking at the end year of WW1, 1918, it has a half-life of 1 with a peak rate of mentions in 1921.
+  
+#H
+h) Now replicate this result for version 2 of the NGrams data in Chinese,
+French, German, Hebrew, Italian, Russian and Spanish.
+
+##Chinese
+```{r}
+ngramoriginalchinese = read.table("1gramchinese.txt")
+ngramchinese = ngramoriginalchinese
+ngramchinese = ngramchinese %>% rename(
+  word = V1,
+  year = V2,
+  match_count = V3,
+  volume_count = V4)
+
+totalcountchinese = read.table("totalcountchinese.txt", sep = "\t", colClasses = "character")
+totalcountchinese = separate_rows(totalcountchinese, V1:V365, convert = TRUE)
+rownames(totalcountchinese)[1] = "year"
+rownames(totalcountchinese)[2] = "match_count"
+rownames(totalcountchinese)[3] = "page_count"
+rownames(totalcountchinese)[4] = "volume_count"
+finaltotalcountchinese = as.data.frame(t(totalcountchinese))
+finaltotalcountchinese %>% 
+  mutate_at(vars(year, match_count), as.integer)
+figurea2chinese = select(finaltotalcountchinese,
+                  year,
+                  match_count)
+
+ngramchinese$word = as.integer(ngramchinese$word)
+hlNgramchinese = filter(ngramchinese, word >= 1875)
+hlNgramfchinese = filter(hlNgramchinese, word <= 1975)
+
+originalhlchinese = left_join(hlNgramfchinese, figurea2chinese, by = "year") %>%
+  mutate(frequency = match_count.x / match_count.y) %>%
+  select(word, year, frequency) %>%
+  mutate(yearG = year > word) %>%
+  filter(yearG == TRUE)
+hlchinese = originalhlchinese
+
+hlMchinese = originalhlchinese %>% group_by(word) %>% summarise(frequency = max(frequency))
+hlYchinese = originalhlchinese %>% group_by(year) 
+hlTchinese = left_join(hlMchinese, hlYchinese, by = "frequency", suffix = c(".x", ".y"))
+hlTchinese = select(hlTchinese, word.x, year, frequency)
+hlTchinese = hlTchinese %>% group_by(word.x) %>% filter (! duplicated(word.x)) %>%
+  rename(word = word.x)
+hlT2chinese = hlTchinese %>% select(frequency) %>%
+  left_join(hlchinese, hlTchinese, by = "word") %>%
+  filter(frequency.x > (frequency.y / 2)) %>%
+  select(word, frequency.x, year)
+
+
+hlFchinese = left_join(hlTchinese, hlT2chinese, by = "word") %>%
+  filter(year.y > year.x) %>%
+  group_by(word) %>% summarise(year.y = min(year.y))
+hlTchinese = hlTchinese %>% select(word, year)
+hlFchinese = left_join(hlFchinese, hlTchinese, by = "word") 
+hlFchinese = mutate(hlFchinese, half_life = (year.y - year))
+hlFchinese = hlFchinese %>% rename(ngram_year = word)
+hlFchinese = hlFchinese %>% select(ngram_year, half_life)
+
+chinesehl = ggplot(hlFchinese, aes(x = ngram_year, y = half_life)) +
+  geom_point(alpha = 8/10) +
+  geom_smooth() +
+  ggtitle("Chinese")
+chinesehl
+```
+
+
+
+##French
+```{r}
+ngramoriginalfrench = read.table("1gramfrench.txt")
+ngramfrench = ngramoriginalfrench
+ngramfrench = ngramfrench %>% rename(
+  word = V1,
+  year = V2,
+  match_count = V3,
+  volume_count = V4)
+
+totalcountfrench = read.table("totalcountfrench.txt", sep = "\t", colClasses = "character")
+totalcountfrench = separate_rows(totalcountfrench, V1:V421, convert = TRUE)
+rownames(totalcountfrench)[1] = "year"
+rownames(totalcountfrench)[2] = "match_count"
+rownames(totalcountfrench)[3] = "page_count"
+rownames(totalcountfrench)[4] = "volume_count"
+finaltotalcountfrench = as.data.frame(t(totalcountfrench))
+finaltotalcountfrench %>% 
+  mutate_at(vars(year, match_count), as.integer)
+figurea2french = select(finaltotalcountfrench,
+                  year,
+                  match_count)
+
+ngramfrench$word = as.integer(ngramfrench$word)
+hlNgramfrench = filter(ngramfrench, word >= 1875)
+hlNgramffrench = filter(hlNgramfrench, word <= 1975)
+
+originalhlfrench = left_join(hlNgramffrench, figurea2french, by = "year") %>%
+  mutate(frequency = match_count.x / match_count.y) %>%
+  select(word, year, frequency) %>%
+  mutate(yearG = year > word) %>%
+  filter(yearG == TRUE)
+hlfrench = originalhlfrench
+
+hlMfrench = originalhlfrench %>% group_by(word) %>% summarise(frequency = max(frequency))
+hlYfrench = originalhlfrench %>% group_by(year) 
+hlTfrench = left_join(hlMfrench, hlYfrench, by = "frequency", suffix = c(".x", ".y"))
+hlTfrench = select(hlTfrench, word.x, year, frequency)
+hlTfrench = hlTfrench %>% group_by(word.x) %>% filter (! duplicated(word.x)) %>%
+  rename(word = word.x)
+hlT2french = hlTfrench %>% select(frequency) %>%
+  left_join(hlfrench, hlTfrench, by = "word") %>%
+  filter(frequency.x > (frequency.y / 2)) %>%
+  select(word, frequency.x, year)
+
+
+hlFfrench = left_join(hlTfrench, hlT2french, by = "word") %>%
+  filter(year.y > year.x) %>%
+  group_by(word) %>% summarise(year.y = min(year.y))
+hlTfrench = hlTfrench %>% select(word, year)
+hlFfrench = left_join(hlFfrench, hlTfrench, by = "word") 
+hlFfrench = mutate(hlFfrench, half_life = (year.y - year))
+hlFfrench = hlFfrench %>% rename(ngram_year = word)
+hlFfrench = hlFfrench %>% select(ngram_year, half_life)
+
+frenchhl = ggplot(hlFfrench, aes(x = ngram_year, y = half_life)) +
+  geom_point(alpha = 8/10) +
+  geom_smooth() +
+  ggtitle("French")
+frenchhl
+```
+
+
+##German
+```{r}
+ngramoriginalgerman = read.table("1gramgerman.txt")
+ngramgerman = ngramoriginalgerman
+ngramgerman = ngramgerman %>% rename(
+  word = V1,
+  year = V2,
+  match_count = V3,
+  volume_count = V4)
+
+totalcountgerman = read.table("totalcountgerman.txt", sep = "\t", colClasses = "character")
+totalcountgerman = separate_rows(totalcountgerman, V1:V317, convert = TRUE)
+rownames(totalcountgerman)[1] = "year"
+rownames(totalcountgerman)[2] = "match_count"
+rownames(totalcountgerman)[3] = "page_count"
+rownames(totalcountgerman)[4] = "volume_count"
+finaltotalcountgerman = as.data.frame(t(totalcountgerman))
+finaltotalcountgerman %>% 
+  mutate_at(vars(year, match_count), as.integer)
+figurea2german = select(finaltotalcountgerman,
+                  year,
+                  match_count)
+
+ngramgerman$word = as.integer(ngramgerman$word)
+hlNgramgerman = filter(ngramgerman, word >= 1875)
+hlNgramfgerman = filter(hlNgramgerman, word <= 1975)
+
+originalhlgerman = left_join(hlNgramfgerman, figurea2german, by = "year") %>%
+  mutate(frequency = match_count.x / match_count.y) %>%
+  select(word, year, frequency) %>%
+  mutate(yearG = year > word) %>%
+  filter(yearG == TRUE)
+hlgerman = originalhlgerman
+
+hlMgerman = originalhlgerman %>% group_by(word) %>% summarise(frequency = max(frequency))
+hlYgerman = originalhlgerman %>% group_by(year) 
+hlTgerman = left_join(hlMgerman, hlYgerman, by = "frequency", suffix = c(".x", ".y"))
+hlTgerman = select(hlTgerman, word.x, year, frequency)
+hlTgerman = hlTgerman %>% group_by(word.x) %>% filter (! duplicated(word.x)) %>%
+  rename(word = word.x)
+hlT2german = hlTgerman %>% select(frequency) %>%
+  left_join(hlgerman, hlTgerman, by = "word") %>%
+  filter(frequency.x > (frequency.y / 2)) %>%
+  select(word, frequency.x, year)
+
+
+hlFgerman = left_join(hlTgerman, hlT2german, by = "word") %>%
+  filter(year.y > year.x) %>%
+  group_by(word) %>% summarise(year.y = min(year.y))
+hlTgerman = hlTgerman %>% select(word, year)
+hlFgerman = left_join(hlFgerman, hlTgerman, by = "word") 
+hlFgerman = mutate(hlFgerman, half_life = (year.y - year))
+hlFgerman = hlFgerman %>% rename(ngram_year = word)
+hlFgerman = hlFgerman %>% select(ngram_year, half_life)
+
+germanhl = ggplot(hlFgerman, aes(x = ngram_year, y = half_life)) +
+  geom_point(alpha = 8/10) +
+  geom_smooth() + 
+  ggtitle("German")
+germanhl
+```
+
+
+##Hebrew
+```{r}
+ngramoriginalhebrew = read.table("1gramhebrew.txt")
+ngramhebrew = ngramoriginalhebrew
+ngramhebrew = ngramhebrew %>% rename(
+  word = V1,
+  year = V2,
+  match_count = V3,
+  volume_count = V4)
+
+totalcounthebrew = read.table("totalcounthebrew.txt", sep = "\t", colClasses = "character")
+totalcounthebrew = separate_rows(totalcounthebrew, V1:V339, convert = TRUE)
+rownames(totalcounthebrew)[1] = "year"
+rownames(totalcounthebrew)[2] = "match_count"
+rownames(totalcounthebrew)[3] = "page_count"
+rownames(totalcounthebrew)[4] = "volume_count"
+finaltotalcounthebrew = as.data.frame(t(totalcounthebrew))
+finaltotalcounthebrew %>% 
+  mutate_at(vars(year, match_count), as.integer)
+figurea2hebrew = select(finaltotalcounthebrew,
+                  year,
+                  match_count)
+
+ngramhebrew$word = as.integer(ngramhebrew$word)
+hlNgramhebrew = filter(ngramhebrew, word >= 1875)
+hlNgramfhebrew = filter(hlNgramhebrew, word <= 1975)
+
+originalhlhebrew = left_join(hlNgramfhebrew, figurea2hebrew, by = "year") %>%
+  mutate(frequency = match_count.x / match_count.y) %>%
+  select(word, year, frequency) %>%
+  mutate(yearG = year > word) %>%
+  filter(yearG == TRUE)
+hlhebrew = originalhlhebrew
+
+hlMhebrew = originalhlhebrew %>% group_by(word) %>% summarise(frequency = max(frequency))
+hlYhebrew = originalhlhebrew %>% group_by(year) 
+hlThebrew = left_join(hlMhebrew, hlYhebrew, by = "frequency", suffix = c(".x", ".y"))
+hlThebrew = select(hlThebrew, word.x, year, frequency)
+hlThebrew = hlThebrew %>% group_by(word.x) %>% filter (! duplicated(word.x)) %>%
+  rename(word = word.x)
+hlT2hebrew = hlThebrew %>% select(frequency) %>%
+  left_join(hlhebrew, hlThebrew, by = "word") %>%
+  filter(frequency.x > (frequency.y / 2)) %>%
+  select(word, frequency.x, year)
+
+
+hlFhebrew = left_join(hlThebrew, hlT2hebrew, by = "word") %>%
+  filter(year.y > year.x) %>%
+  group_by(word) %>% summarise(year.y = min(year.y))
+hlThebrew = hlThebrew %>% select(word, year)
+hlFhebrew = left_join(hlFhebrew, hlThebrew, by = "word") 
+hlFhebrew = mutate(hlFhebrew, half_life = (year.y - year))
+hlFhebrew = hlFhebrew %>% rename(ngram_year = word)
+hlFhebrew = hlFhebrew %>% select(ngram_year, half_life)
+
+hebrewhl = ggplot(hlFhebrew, aes(x = ngram_year, y = half_life)) +
+  geom_point(alpha = 8/10) +
+  geom_smooth() +
+  ggtitle("Hebrew")
+hebrewhl
+```
+
+
+##Italian
+```{r}
+ngramoriginalitalian = read.table("1gramitalian.txt")
+ngramitalian = ngramoriginalitalian
+ngramitalian = ngramitalian %>% rename(
+  word = V1,
+  year = V2,
+  match_count = V3,
+  volume_count = V4)
+
+totalcountitalian = read.table("totalcountitalian.txt", sep = "\t", colClasses = "character")
+totalcountitalian = separate_rows(totalcountitalian, V1:V356, convert = TRUE)
+rownames(totalcountitalian)[1] = "year"
+rownames(totalcountitalian)[2] = "match_count"
+rownames(totalcountitalian)[3] = "page_count"
+rownames(totalcountitalian)[4] = "volume_count"
+finaltotalcountitalian = as.data.frame(t(totalcountitalian))
+finaltotalcountitalian %>% 
+  mutate_at(vars(year, match_count), as.integer)
+figurea2italian = select(finaltotalcountitalian,
+                  year,
+                  match_count)
+
+ngramitalian$word = as.integer(ngramitalian$word)
+hlNgramitalian = filter(ngramitalian, word >= 1875)
+hlNgramfitalian = filter(hlNgramitalian, word <= 1975)
+
+originalhlitalian = left_join(hlNgramfitalian, figurea2italian, by = "year") %>%
+  mutate(frequency = match_count.x / match_count.y) %>%
+  select(word, year, frequency) %>%
+  mutate(yearG = year > word) %>%
+  filter(yearG == TRUE)
+hlitalian = originalhlitalian
+
+hlMitalian = originalhlitalian %>% group_by(word) %>% summarise(frequency = max(frequency))
+hlYitalian = originalhlitalian %>% group_by(year) 
+hlTitalian = left_join(hlMitalian, hlYitalian, by = "frequency", suffix = c(".x", ".y"))
+hlTitalian = select(hlTitalian, word.x, year, frequency)
+hlTitalian = hlTitalian %>% group_by(word.x) %>% filter (! duplicated(word.x)) %>%
+  rename(word = word.x)
+hlT2italian = hlTitalian %>% select(frequency) %>%
+  left_join(hlitalian, hlTitalian, by = "word") %>%
+  filter(frequency.x > (frequency.y / 2)) %>%
+  select(word, frequency.x, year)
+
+
+hlFitalian = left_join(hlTitalian, hlT2italian, by = "word") %>%
+  filter(year.y > year.x) %>%
+  group_by(word) %>% summarise(year.y = min(year.y))
+hlTitalian = hlTitalian %>% select(word, year)
+hlFitalian = left_join(hlFitalian, hlTitalian, by = "word") 
+hlFitalian = mutate(hlFitalian, half_life = (year.y - year))
+hlFitalian = hlFitalian %>% rename(ngram_year = word)
+hlFitalian = hlFitalian %>% select(ngram_year, half_life)
+
+italianhl = ggplot(hlFitalian, aes(x = ngram_year, y = half_life)) +
+  geom_point(alpha = 8/10) +
+  geom_smooth() +
+  ggtitle("Italian")
+italianhl
+```
+
+##Russian
+```{r}
+ngramoriginalrussian = read.table("1gramrussian.txt")
+ngramrussian = ngramoriginalrussian
+ngramrussian = ngramrussian %>% rename(
+  word = V1,
+  year = V2,
+  match_count = V3,
+  volume_count = V4)
+
+totalcountrussian = read.table("totalcountrussian.txt", sep = "\t", colClasses = "character")
+totalcountrussian = separate_rows(totalcountrussian, V1:V287, convert = TRUE)
+rownames(totalcountrussian)[1] = "year"
+rownames(totalcountrussian)[2] = "match_count"
+rownames(totalcountrussian)[3] = "page_count"
+rownames(totalcountrussian)[4] = "volume_count"
+finaltotalcountrussian = as.data.frame(t(totalcountrussian))
+finaltotalcountrussian %>% 
+  mutate_at(vars(year, match_count), as.integer)
+figurea2russian = select(finaltotalcountrussian,
+                  year,
+                  match_count)
+
+ngramrussian$word = as.integer(ngramrussian$word)
+hlNgramrussian = filter(ngramrussian, word >= 1875)
+hlNgramfrussian = filter(hlNgramrussian, word <= 1975)
+
+originalhlrussian = left_join(hlNgramfrussian, figurea2russian, by = "year") %>%
+  mutate(frequency = match_count.x / match_count.y) %>%
+  select(word, year, frequency) %>%
+  mutate(yearG = year > word) %>%
+  filter(yearG == TRUE)
+hlrussian = originalhlrussian
+
+hlMrussian = originalhlrussian %>% group_by(word) %>% summarise(frequency = max(frequency))
+hlYrussian = originalhlrussian %>% group_by(year) 
+hlTrussian = left_join(hlMrussian, hlYrussian, by = "frequency", suffix = c(".x", ".y"))
+hlTrussian = select(hlTrussian, word.x, year, frequency)
+hlTrussian = hlTrussian %>% group_by(word.x) %>% filter (! duplicated(word.x)) %>%
+  rename(word = word.x)
+hlT2russian = hlTrussian %>% select(frequency) %>%
+  left_join(hlrussian, hlTrussian, by = "word") %>%
+  filter(frequency.x > (frequency.y / 2)) %>%
+  select(word, frequency.x, year)
+
+
+hlFrussian = left_join(hlTrussian, hlT2russian, by = "word") %>%
+  filter(year.y > year.x) %>%
+  group_by(word) %>% summarise(year.y = min(year.y))
+hlTrussian = hlTrussian %>% select(word, year)
+hlFrussian = left_join(hlFrussian, hlTrussian, by = "word") 
+hlFrussian = mutate(hlFrussian, half_life = (year.y - year))
+hlFrussian = hlFrussian %>% rename(ngram_year = word)
+hlFrussian = hlFrussian %>% select(ngram_year, half_life)
+
+russianhl = ggplot(hlFrussian, aes(x = ngram_year, y = half_life)) +
+  geom_point(alpha = 8/10) +
+  geom_smooth() +
+  ggtitle("Russian")
+russianhl
+```
+
+
+##Spanish
+```{r}
+ngramoriginalspanish = read.table("1gramspanish.txt")
+ngramspanish = ngramoriginalspanish
+ngramspanish = ngramspanish %>% rename(
+  word = V1,
+  year = V2,
+  match_count = V3,
+  volume_count = V4)
+
+totalcountspanish = read.table("totalcountspanish.txt", sep = "\t", colClasses = "character")
+totalcountspanish = separate_rows(totalcountspanish, V1:V405, convert = TRUE)
+rownames(totalcountspanish)[1] = "year"
+rownames(totalcountspanish)[2] = "match_count"
+rownames(totalcountspanish)[3] = "page_count"
+rownames(totalcountspanish)[4] = "volume_count"
+finaltotalcountspanish = as.data.frame(t(totalcountspanish))
+finaltotalcountspanish %>% 
+  mutate_at(vars(year, match_count), as.integer)
+figurea2spanish = select(finaltotalcountspanish,
+                  year,
+                  match_count)
+
+ngramspanish$word = as.integer(ngramspanish$word)
+hlNgramspanish = filter(ngramspanish, word >= 1875)
+hlNgramfspanish = filter(hlNgramspanish, word <= 1975)
+
+originalhlspanish = left_join(hlNgramfspanish, figurea2spanish, by = "year") %>%
+  mutate(frequency = match_count.x / match_count.y) %>%
+  select(word, year, frequency) %>%
+  mutate(yearG = year > word) %>%
+  filter(yearG == TRUE)
+hlspanish = originalhlspanish
+
+hlMspanish = originalhlspanish %>% group_by(word) %>% summarise(frequency = max(frequency))
+hlYspanish = originalhlspanish %>% group_by(year) 
+hlTspanish = left_join(hlMspanish, hlYspanish, by = "frequency", suffix = c(".x", ".y"))
+hlTspanish = select(hlTspanish, word.x, year, frequency)
+hlTspanish = hlTspanish %>% group_by(word.x) %>% filter (! duplicated(word.x)) %>%
+  rename(word = word.x)
+hlT2spanish = hlTspanish %>% select(frequency) %>%
+  left_join(hlspanish, hlTspanish, by = "word") %>%
+  filter(frequency.x > (frequency.y / 2)) %>%
+  select(word, frequency.x, year)
+
+
+hlFspanish = left_join(hlTspanish, hlT2spanish, by = "word") %>%
+  filter(year.y > year.x) %>%
+  group_by(word) %>% summarise(year.y = min(year.y))
+hlTspanish = hlTspanish %>% select(word, year)
+hlFspanish = left_join(hlFspanish, hlTspanish, by = "word") 
+hlFspanish = mutate(hlFspanish, half_life = (year.y - year))
+hlFspanish = hlFspanish %>% rename(ngram_year = word)
+hlFspanish = hlFspanish %>% select(ngram_year, half_life)
+
+spanishhl = ggplot(hlFspanish, aes(x = ngram_year, y = half_life)) +
+  geom_point(alpha = 8/10) +
+  geom_smooth() +
+  ggtitle("Spanish")
+spanishhl
+```
+
+
+#I
+i) Comparing across all languages, were there any years that were outliers,
+such as years that were forgotten particularly quickly or particularly
+slowly? Briefly speculate about possible reasons for that pattern.
+```{r}
+install.packages("gridExtra")
+library("gridExtra")
+
+grid.arrange(englishhl, chinesehl,frenchhl, germanhl, hebrewhl, italianhl, russianhl, spanishhl, nrow = 2)
+```
+Across all languages, there are outliers within the middle of the range of 1875-1975, specifically the 1gram 1925, my speculation would be that these are years with international events that were recorded in each language and there would be a high frequency of them with a high half-life due to the importance of those events that happened within those years. Looking at Hebrew, Chinese and Italian, they both have their largest outlier in 2 years close to each other which could be a shared event among them. China has a higher variance around its 1gram half-life frequency out of every other language between 1875-1925 which could be due to sociopolitical events within mandarin/cantonese speaking areas. 
